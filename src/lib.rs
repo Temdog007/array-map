@@ -1,3 +1,5 @@
+#![feature(test)]
+
 #[macro_export]
 macro_rules! make_map {
     ($name:ident, $key:ty, $value:ty, $width:literal, $height:literal) => {
@@ -13,12 +15,15 @@ macro_rules! make_map {
             }
 
             impl ArrayMap {
+                pub fn new() -> Self {
+                    unsafe { std::mem::zeroed() }
+                }
                 pub fn insert(&mut self, k: $key, v: $value) {
                     if self.is_full() {
                         panic!("Map is full");
                     }
 
-                    if k > ArrayMap::size() {
+                    if k >= ArrayMap::size() {
                         panic!("Key {} is out of range", k);
                     }
 
@@ -38,7 +43,7 @@ macro_rules! make_map {
                         return None;
                     }
 
-                    if k > ArrayMap::size() {
+                    if k >= ArrayMap::size() {
                         panic!("Key {} is out of range", k);
                     }
 
@@ -52,6 +57,11 @@ macro_rules! make_map {
                             None => None,
                         }
                     }
+                }
+
+                pub fn clear(&mut self) {
+                    self.count = 0;
+                    unsafe { self.values = std::mem::zeroed() };
                 }
 
                 pub fn replace(&mut self, k: $key, v: $value) -> Option<$value> {
@@ -187,7 +197,9 @@ macro_rules! make_map {
 }
 
 mod tests {
+    extern crate test;
     use super::*;
+    use test::Bencher;
 
     make_map!(Map, u8, i32, 8, 8);
     type TestMap = Map::ArrayMap;
@@ -215,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_insert_remove() {
+    fn iterator() {
         let mut t: TestMap = Default::default();
 
         for i in 0..64 {
@@ -245,5 +257,84 @@ mod tests {
         for (k, v) in t.iter() {
             assert_eq!(*v, k as i32 * 64, "Bad value a {}", k);
         }
+
+        t.clear();
+        assert!(t.is_empty());
+        assert_eq!(t.len(), 0);
+        assert!(!t.is_full());
+
+        for (_, _) in t.iter() {
+            panic!("Iterator should be empty!");
+        }
+    }
+
+    #[test]
+    fn replace() {
+        let mut t: TestMap = Default::default();
+
+        t.insert(10, 3);
+        assert_eq!(t.get(10), &Some(3));
+        assert_eq!(t.replace(10, 1000), Some(3));
+        assert_eq!(t.get(10), &Some(1000));
+    }
+
+    #[test]
+    #[should_panic]
+    fn bad_insert() {
+        let mut t: TestMap = Default::default();
+
+        t.insert(64, 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn bad_remove() {
+        let mut t: TestMap = Default::default();
+
+        t.remove(64);
+    }
+
+    #[test]
+    #[should_panic]
+    fn bad_insert2() {
+        let mut t: TestMap = Default::default();
+
+        for i in 0..TestMap::size() {
+            t.insert(i, 0);
+        }
+        t.insert(60, 1);
+    }
+
+    #[bench]
+    fn std_hash_map(b: &mut Bencher) {
+        let mut map = std::collections::HashMap::<u16, u16>::with_capacity(1024);
+        println!("HashMap: {:?}", std::mem::size_of_val(&map));
+        b.iter(move || {
+            for i in 0..1024 {
+                map.insert(i, i);
+            }
+            for i in map.iter() {
+                let _ = i;
+            }
+
+            map.clear();
+        });
+    }
+
+    #[bench]
+    fn array_map(b: &mut Bencher) {
+        make_map!(BenchMap, u16, u16, 32, 32);
+        let mut map = BenchMap::ArrayMap::new();
+        println!("BenchMap: {:?}", std::mem::size_of_val(&map));
+        b.iter(move || {
+            for i in 0..1024 {
+                map.insert(i, i);
+            }
+            for i in map.iter() {
+                let _ = i;
+            }
+
+            map.clear();
+        });
     }
 }
