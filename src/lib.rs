@@ -133,9 +133,9 @@ macro_rules! make_map {
 
                 pub fn iter_mut(&mut self) -> impl Iterator<Item = ($key, &mut $value)> {
                     IterMut {
-                        map: self,
+                        map: unsafe { std::ptr::NonNull::new_unchecked(self as *mut ArrayMap) },
                         count: 0,
-                        ptr: unsafe { std::ptr::NonNull::new_unchecked(std::ptr::null_mut()) },
+                        _marker: std::marker::PhantomData,
                     }
                 }
             }
@@ -163,29 +163,28 @@ macro_rules! make_map {
             }
 
             struct IterMut<'a> {
-                map: &'a mut ArrayMap,
+                map: std::ptr::NonNull<ArrayMap>,
                 count: $key,
-                ptr: std::ptr::NonNull<Option<$value>>,
+                _marker: std::marker::PhantomData<&'a ArrayMap>,
             }
 
             impl<'a> Iterator for IterMut<'a> {
                 type Item = ($key, &'a mut $value);
 
                 fn next(&mut self) -> Option<Self::Item> {
-                    while self.count < self.map.len() {
-                        unsafe {
-                            let k = self.map.get_key(self.count as usize);
-                            self.ptr = std::ptr::NonNull::new_unchecked(
-                                self.map.get_mut_value(k as usize),
-                            );
-                            let ptr = self.ptr.as_ptr();
+                    unsafe {
+                        let ptr = self.map.as_ptr();
+                        let map = &mut *ptr;
+                        while self.count < map.len() {
+                            let k = map.get_key(self.count as usize);
+                            let ptr = map.get_mut_value(k as usize);
                             let opt = &mut *ptr;
                             match opt {
                                 Some(s) => {
                                     self.count += 1;
                                     return Some((k, s));
                                 }
-                                None => self.map.swap_remove_key(k as usize),
+                                None => map.swap_remove_key(k as usize),
                             }
                         }
                     }
@@ -291,6 +290,7 @@ mod tests {
     fn bad_remove() {
         let mut t: TestMap = Default::default();
 
+        t.insert(0, 0);
         t.remove(64);
     }
 
@@ -308,12 +308,54 @@ mod tests {
     #[bench]
     fn std_hash_map(b: &mut Bencher) {
         let mut map = std::collections::HashMap::<u16, u16>::with_capacity(1024);
-        println!("HashMap: {:?}", std::mem::size_of_val(&map));
+        // println!("HashMap: {:?}", std::mem::size_of_val(&map));
         b.iter(move || {
             for i in 0..1024 {
                 map.insert(i, i);
             }
+            for i in (0..1024).step_by(3) {
+                map.remove(&i);
+            }
             for i in map.iter() {
+                let _ = i;
+            }
+
+            map.clear();
+        });
+    }
+
+    #[bench]
+    fn std_hash_map_mut(b: &mut Bencher) {
+        let mut map = std::collections::HashMap::<u16, u16>::with_capacity(1024);
+        // println!("HashMap: {:?}", std::mem::size_of_val(&map));
+        b.iter(move || {
+            for i in 0..1024 {
+                map.insert(i, i);
+            }
+            for i in (0..1024).step_by(3) {
+                map.remove(&i);
+            }
+            for i in map.iter_mut() {
+                let _ = i;
+            }
+
+            map.clear();
+        });
+    }
+
+    #[bench]
+    fn array_map_mut(b: &mut Bencher) {
+        make_map!(BenchMap, u16, u16, 32, 32);
+        let mut map = BenchMap::ArrayMap::new();
+        // println!("BenchMap: {:?}", std::mem::size_of_val(&map));
+        b.iter(move || {
+            for i in 0..1024 {
+                map.insert(i, i);
+            }
+            for i in (0..1024).step_by(3) {
+                map.remove(i);
+            }
+            for i in map.iter_mut() {
                 let _ = i;
             }
 
@@ -325,10 +367,13 @@ mod tests {
     fn array_map(b: &mut Bencher) {
         make_map!(BenchMap, u16, u16, 32, 32);
         let mut map = BenchMap::ArrayMap::new();
-        println!("BenchMap: {:?}", std::mem::size_of_val(&map));
+        // println!("BenchMap: {:?}", std::mem::size_of_val(&map));
         b.iter(move || {
             for i in 0..1024 {
                 map.insert(i, i);
+            }
+            for i in (0..1024).step_by(3) {
+                map.remove(i);
             }
             for i in map.iter() {
                 let _ = i;
