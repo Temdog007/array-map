@@ -1,23 +1,26 @@
-#![feature(test)]
+#![cfg_attr(feature = "unstable", feature(test))]
 
 #[macro_export]
 macro_rules! make_map {
-    ($name:ident, $key:ty, $value:ty, $width:literal, $height:literal) => {
+    ($name:ident, $key:ty, $value:ty, $width:literal, $height:literal, $depth:literal) => {
         pub mod $name {
 
+            #[cfg(feature = "serialize")]
             use serde::{Deserialize, Serialize};
 
-            #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+            #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+            #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
             struct Entry {
                 key: $key,
                 value: $value,
             }
 
-            #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+            #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+            #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
             pub struct ArrayMap {
                 count: $key,
-                keys: [[$key; $height]; $width],
-                values: [[Option<Entry>; $height]; $width],
+                keys: [[[$key; $height]; $width]; $depth],
+                values: [[[Option<Entry>; $height]; $width]; $depth],
             }
 
             impl ArrayMap {
@@ -91,16 +94,16 @@ macro_rules! make_map {
                 }
 
                 pub const fn size() -> $key {
-                    $width * $height
+                    $width * $height * $depth
                 }
 
                 unsafe fn set_key(&mut self, index: usize, k: $key) {
-                    let ptr = &mut self.keys[0][0] as *mut $key;
+                    let ptr = &mut self.keys[0][0][0] as *mut $key;
                     *ptr.add(index) = k;
                 }
 
                 unsafe fn swap_remove_key(&mut self, index: usize) {
-                    let ptr = &mut self.keys[0][0] as *mut $key;
+                    let ptr = &mut self.keys[0][0][0] as *mut $key;
                     let current = ptr.add(index);
                     let last = ptr.add(self.len() as usize - 1);
                     current.swap(last);
@@ -108,27 +111,27 @@ macro_rules! make_map {
                 }
 
                 unsafe fn get_key(&self, index: usize) -> $key {
-                    let ptr = &self.keys[0][0] as *const $key;
+                    let ptr = &self.keys[0][0][0] as *const $key;
                     *ptr.add(index)
                 }
 
                 unsafe fn set_value(&mut self, index: usize, v: Option<Entry>) {
-                    let ptr = &mut self.values[0][0] as *mut Option<Entry>;
+                    let ptr = &mut self.values[0][0][0] as *mut Option<Entry>;
                     *ptr.add(index) = v;
                 }
 
                 unsafe fn get_value(&self, index: usize) -> Option<Entry> {
-                    let ptr = &self.values[0][0] as *const Option<Entry>;
+                    let ptr = &self.values[0][0][0] as *const Option<Entry>;
                     *ptr.add(index)
                 }
 
                 unsafe fn get_ref_value(&self, index: usize) -> &Option<Entry> {
-                    let ptr = &self.values[0][0] as *const Option<Entry>;
+                    let ptr = &self.values[0][0][0] as *const Option<Entry>;
                     &*ptr.add(index)
                 }
 
                 unsafe fn get_mut_value<'a>(&'a mut self, index: usize) -> *mut Option<Entry> {
-                    let ptr = &mut self.values[0][0] as *mut Option<Entry>;
+                    let ptr = &mut self.values[0][0][0] as *mut Option<Entry>;
                     ptr.add(index)
                 }
 
@@ -203,16 +206,19 @@ macro_rules! make_map {
     };
 }
 
+#[cfg(test)]
 mod tests {
+    #[cfg(feature = "unstable")]
     extern crate test;
     use super::*;
+    #[cfg(feature = "unstable")]
     use test::Bencher;
 
     use std::collections::HashMap;
 
-    make_map!(Map, u32, u32, 8, 8);
+    make_map!(Map, u32, u32, 4, 4, 4);
     type TestMap = Map::ArrayMap;
-    make_map!(Map2, u16, u16, 32, 32);
+    make_map!(Map2, u16, u16, 32, 32, 32);
     type BenchMap = Map2::ArrayMap;
 
     #[test]
@@ -325,12 +331,12 @@ mod tests {
     }
 
     fn do_map_test1<T: InsertMap<u16, u16>>(map: &mut T) {
-        for i in 0..256 {
+        for i in 0..(BenchMap::size() / 4) {
             for j in 0..4 {
                 map.insert(i, i * j);
             }
         }
-        for i in (0..256).step_by(3) {
+        for i in (0..(BenchMap::size() / 4)).step_by(3) {
             map.remove(i);
         }
 
@@ -338,10 +344,10 @@ mod tests {
     }
 
     fn do_map_test2<T: InsertMap<u16, u16>>(map: &mut T) {
-        for i in 0..1024 {
+        for i in 0..BenchMap::size() {
             map.insert(i, i);
         }
-        for i in (0..1024).step_by(3) {
+        for i in (0..BenchMap::size()).step_by(3) {
             map.remove(i);
         }
 
@@ -349,16 +355,17 @@ mod tests {
     }
 
     fn do_map_test3<T: InsertMap<u16, u16>>(map: &mut T) {
-        for i in (0..1024).step_by(2) {
+        for i in (0..BenchMap::size()).step_by(2) {
             map.insert(i, i);
         }
-        for i in (0..1024).step_by(5) {
+        for i in (0..BenchMap::size()).step_by(5) {
             map.insert(i, i);
         }
 
         map.clear();
     }
 
+    #[cfg(feature = "unstable")]
     #[bench]
     fn array_map_dup_keys(b: &mut Bencher) {
         let mut map = BenchMap::new();
@@ -366,6 +373,7 @@ mod tests {
         b.iter(move || do_map_test1(&mut map));
     }
 
+    #[cfg(feature = "unstable")]
     #[bench]
     fn array_map_unique_keys(b: &mut Bencher) {
         let mut map = BenchMap::new();
@@ -373,6 +381,7 @@ mod tests {
         b.iter(move || do_map_test2(&mut map));
     }
 
+    #[cfg(feature = "unstable")]
     #[bench]
     fn array_map_some_dup_keys(b: &mut Bencher) {
         let mut map = BenchMap::new();
@@ -380,23 +389,26 @@ mod tests {
         b.iter(move || do_map_test3(&mut map));
     }
 
+    #[cfg(feature = "unstable")]
     #[bench]
     fn std_hash_map_dup_keys(b: &mut Bencher) {
-        let mut map: HashMap<u16, u16> = HashMap::with_capacity(1024);
+        let mut map: HashMap<u16, u16> = HashMap::with_capacity(BenchMap::size() as usize);
         // println!("BenchMap: {:?}", std::mem::size_of_val(&map));
         b.iter(move || do_map_test1(&mut map));
     }
 
+    #[cfg(feature = "unstable")]
     #[bench]
     fn std_hash_map_unique_keys(b: &mut Bencher) {
-        let mut map: HashMap<u16, u16> = HashMap::with_capacity(1024);
+        let mut map: HashMap<u16, u16> = HashMap::with_capacity(BenchMap::size() as usize);
         // println!("BenchMap: {:?}", std::mem::size_of_val(&map));
         b.iter(move || do_map_test2(&mut map));
     }
 
+    #[cfg(feature = "unstable")]
     #[bench]
     fn std_hash_map_some_keys(b: &mut Bencher) {
-        let mut map: HashMap<u16, u16> = HashMap::with_capacity(1024);
+        let mut map: HashMap<u16, u16> = HashMap::with_capacity(BenchMap::size() as usize);
         // println!("BenchMap: {:?}", std::mem::size_of_val(&map));
         b.iter(move || do_map_test3(&mut map));
     }
